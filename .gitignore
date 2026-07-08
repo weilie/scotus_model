@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated corpus outputs can be large.
+data/
+
+# Local scratch outputs.
+tmp/
+*.log
