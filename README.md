@@ -23,7 +23,7 @@ python -m pytest -q
 This downloads documents for the first 3 cases discovered from the OT2022 slip-opinion page, enriched with transcript, audio, docket, filing, and questions-presented links where available:
 
 ```bash
-python -m scotus_corpus_builder.build_corpus --terms 2022 --limit 3 --out data/scotus-jackson-court --extract-text
+python -m scotus_corpus_builder.build_corpus --terms 2022 --limit 3 --out data/scotus-jackson-court --text-only --skip-audio
 ```
 
 To avoid downloading PDFs/audio and only build metadata:
@@ -37,10 +37,14 @@ python -m scotus_corpus_builder.build_corpus --terms 2022 --limit 3 --out data/s
 ## Full run
 
 ```bash
-python -m scotus_corpus_builder.build_corpus --terms 2022 2023 2024 2025 2026 --out data/scotus-jackson-court --extract-text
+python -m scotus_corpus_builder.build_corpus --terms 2022 2023 2024 2025 --out data/scotus-jackson-court --text-only --skip-audio
 ```
 
 The job is resume-safe: existing files with matching manifest entries are skipped unless `--force` is used.
+
+Use `--skip-audio` for modeling-oriented runs. Oral argument MP3s are large, and the transcript PDFs usually provide the text needed for modeling.
+
+Use `--text-only` to extract text from PDFs and delete each PDF after successful extraction. The manifest keeps the source URL, SHA-256 hash, and extracted text path. PDFs are retained if extraction fails.
 
 ## Output layout
 

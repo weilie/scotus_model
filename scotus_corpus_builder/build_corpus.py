@@ -37,6 +37,10 @@ class DocumentRef:
     sha256: Optional[str] = None
     status: str = "pending"
     error: Optional[str] = None
+    local_file_retained: Optional[bool] = None
+    extracted_text_path: Optional[str] = None
+    extraction_status: Optional[str] = None
+    extraction_error: Optional[str] = None
 
 
 @dataclass
@@ -102,6 +106,9 @@ def parse_opinion_term(term: int) -> list[dict]:
         label = a.get_text(" ", strip=True)
         if "/opinions/" not in href or not href.lower().endswith(".pdf"):
             continue
+        filename = Path(urlparse(href).path).name.lower()
+        if "diff" in filename or re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2}", label):
+            continue
         # Use parent row if present; otherwise preceding text around link.
         row_text = a.find_parent("tr").get_text(" ", strip=True) if a.find_parent("tr") else a.parent.get_text(" ", strip=True)
         if not row_text or label not in row_text:
@@ -145,7 +152,7 @@ def parse_transcript_term(term: int) -> list[dict]:
             "docket": docket.replace(".", ""),
             "name": name,
             "argument_date": date_match.group(0) if date_match else None,
-            "transcript_pdf_url": urljoin(BASE, a["href"]),
+            "transcript_pdf_url": urljoin(url, a["href"]),
             "source_page": url,
         })
     return dedupe_dicts(rows, key=lambda r: (r["term"], r["docket"]))
@@ -290,7 +297,7 @@ def add_audio_links(rec: CaseRecord) -> None:
     rec.documents = dedupe_docs(rec.documents)
 
 
-def extract_pdf_text(pdf_path: Path, txt_path: Path) -> bool:
+def extract_pdf_text(pdf_path: Path, txt_path: Path) -> tuple[bool, Optional[str]]:
     try:
         from pypdf import PdfReader
         reader = PdfReader(str(pdf_path))
@@ -300,12 +307,21 @@ def extract_pdf_text(pdf_path: Path, txt_path: Path) -> bool:
             text.append(page.extract_text() or "")
         txt_path.parent.mkdir(parents=True, exist_ok=True)
         txt_path.write_text("".join(text), encoding="utf-8")
-        return True
-    except Exception:
-        return False
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
-def write_case(root: Path, rec: CaseRecord, *, metadata_only=False, extract_text=False, force=False) -> list[dict]:
+def write_case(
+    root: Path,
+    rec: CaseRecord,
+    *,
+    metadata_only=False,
+    extract_text=False,
+    force=False,
+    skip_audio=False,
+    text_only=False,
+) -> list[dict]:
     cdir = case_dir(root, rec)
     cdir.mkdir(parents=True, exist_ok=True)
     manifest: list[dict] = []
@@ -326,6 +342,8 @@ def write_case(root: Path, rec: CaseRecord, *, metadata_only=False, extract_text
     if rec.opinion_url:
         rec.documents.append(DocumentRef("slip_opinion", "Slip opinion", rec.opinion_url, f"{BASE}/opinions/slipopinion/{rec.term % 100:02d}"))
     add_audio_links(rec)
+    if skip_audio:
+        rec.documents = [d for d in rec.documents if d.doc_type != "oral_argument_audio"]
     rec.documents = dedupe_docs(rec.documents)
 
     for d in rec.documents:
@@ -339,9 +357,18 @@ def write_case(root: Path, rec: CaseRecord, *, metadata_only=False, extract_text
         else:
             status, digest, err = download(d.url, dest, force=force)
             d.status = status; d.sha256 = digest or None; d.error = err
+            d.local_file_retained = status in {"downloaded", "skipped"}
             if extract_text and status in {"downloaded", "skipped"} and dest.suffix.lower() == ".pdf":
                 txt_dest = cdir / "extracted_text" / f"{sub.replace('/', '_')}__{dest.stem}.txt"
-                extract_pdf_text(dest, txt_dest)
+                ok, err = extract_pdf_text(dest, txt_dest)
+                d.extraction_status = "extracted" if ok else "error"
+                d.extraction_error = err
+                if ok:
+                    d.extracted_text_path = relative(txt_dest, root)
+                    if text_only:
+                        dest.unlink(missing_ok=True)
+                        d.local_path = None
+                        d.local_file_retained = False
         manifest.append({"term": rec.term, "docket": rec.docket, **asdict(d)})
 
     # Store metadata after docs have local paths/hashes.
@@ -390,6 +417,8 @@ def main(argv=None) -> int:
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--metadata-only", action="store_true")
     p.add_argument("--extract-text", action="store_true")
+    p.add_argument("--skip-audio", action="store_true", help="Do not download or record oral argument MP3 files.")
+    p.add_argument("--text-only", action="store_true", help="Extract PDF text and delete each PDF after successful extraction.")
     p.add_argument("--force", action="store_true")
     args = p.parse_args(argv)
 
@@ -399,7 +428,17 @@ def main(argv=None) -> int:
         cases = cases[: args.limit]
     all_manifest=[]
     for rec in tqdm(cases, desc="cases"):
-        all_manifest.extend(write_case(args.out, rec, metadata_only=args.metadata_only, extract_text=args.extract_text, force=args.force))
+        all_manifest.extend(
+            write_case(
+                args.out,
+                rec,
+                metadata_only=args.metadata_only,
+                extract_text=args.extract_text or args.text_only,
+                force=args.force,
+                skip_audio=args.skip_audio,
+                text_only=args.text_only,
+            )
+        )
     write_cases_csv(args.out, cases)
     with (args.out / "manifest.jsonl").open("w", encoding="utf-8") as f:
         for row in all_manifest:
