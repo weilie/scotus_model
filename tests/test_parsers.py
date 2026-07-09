@@ -8,6 +8,7 @@ from scotus_corpus_builder.build_corpus import (
     parse_opinion_term,
     parse_transcript_term,
     parse_docket_page,
+    safe_name,
     write_case,
 )
 
@@ -58,6 +59,13 @@ def test_docket_link_filter_only_accepts_case_pdfs():
     assert is_case_document_link("/qp/21-00476qp.pdf")
     assert not is_case_document_link("/publicinfo/PIOServices.pdf")
     assert not is_case_document_link("/DocketPDF/21/21-476/226928/readme.txt")
+
+
+def test_safe_name_preserves_extension_when_truncating():
+    url = "https://www.supremecourt.gov/DocketPDF/20/20-1199/" + ("a" * 240) + ".pdf"
+    name = safe_name(url, "fallback.pdf")
+    assert len(name) == 180
+    assert name.endswith(".pdf")
 
 
 def test_attachment_labels_override_row_context():

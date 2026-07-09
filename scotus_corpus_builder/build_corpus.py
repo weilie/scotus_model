@@ -78,7 +78,15 @@ def safe_name(url: str, default: str) -> str:
     name = Path(urlparse(url).path).name
     if not name or "." not in name:
         name = default
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:180]
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    suffix = Path(name).suffix
+    max_len = 180
+    if len(name) <= max_len:
+        return name
+    if suffix:
+        stem = name[: -len(suffix)]
+        return f"{stem[: max_len - len(suffix)]}{suffix}"
+    return name[:max_len]
 
 
 def download(url: str, dest: Path, *, force: bool = False, sleep: float = 0.15) -> tuple[str, str, Optional[str]]:
@@ -358,7 +366,7 @@ def write_case(
             status, digest, err = download(d.url, dest, force=force)
             d.status = status; d.sha256 = digest or None; d.error = err
             d.local_file_retained = status in {"downloaded", "skipped"}
-            if extract_text and status in {"downloaded", "skipped"} and dest.suffix.lower() == ".pdf":
+            if extract_text and status in {"downloaded", "skipped"} and ext == ".pdf":
                 txt_dest = cdir / "extracted_text" / f"{sub.replace('/', '_')}__{dest.stem}.txt"
                 ok, err = extract_pdf_text(dest, txt_dest)
                 d.extraction_status = "extracted" if ok else "error"
